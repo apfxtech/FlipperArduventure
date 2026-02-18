@@ -69,8 +69,11 @@ void stateMenuMain()
 void stateMenuContinue()
 {
   loadGame();
-  gameState = STATE_GAME_PLAYING;
   ATM.stop();
+  // Force region music to start immediately after loading.
+  songPlaying = 0;
+  changeSong(player.currentRegion);
+  gameState = STATE_GAME_PLAYING;
 }
 
 void stateMenuNew()
