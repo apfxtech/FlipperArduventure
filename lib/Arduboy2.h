@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Arduino.h"
+#include "ArduboyAudio.h"
 #include "ArduboyTones.h"
 #include "EEPROM.h"
 #include <stdint.h>
