@@ -6,7 +6,7 @@
 #include "lib/ATMlib.h"
 #include "bitmaps.h"
 
-#define EEPROM_START 16
+#define EEPROM_START 0
 
 //define menu states (on main menu)
 #define STATE_MENU_INTRO    0 // stateMenuIntro

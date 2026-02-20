@@ -105,8 +105,7 @@ public:
         uint8_t* screen_buffer,
         volatile uint8_t* input_state,
         FuriMutex* game_mutex,
-        volatile bool* exit_requested)
-    {
+        volatile bool* exit_requested) {
         sBuffer_ = screen_buffer;
         input_state_ = input_state;
         input_ctx_.input_state = input_state_;
@@ -237,21 +236,24 @@ public:
     }
 
     void drawPixel(int16_t x, int16_t y, uint8_t color) {
-        if(!sBuffer_) return;
-        if((uint16_t)x >= (uint16_t)WIDTH || (uint16_t)y >= (uint16_t)HEIGHT) return;
+        uint16_t ux = (uint16_t)x;
+        uint16_t uy = (uint16_t)y;
 
-        uint8_t* dst = &sBuffer_[(uint16_t)x + (uint16_t)((y >> 3) * WIDTH)];
-        const uint8_t mask = (uint8_t)(1u << (y & 7));
-        if(color)
-            *dst |= mask;
-        else
-            *dst &= (uint8_t)~mask;
+        if(!sBuffer_ || ux >= WIDTH || uy >= HEIGHT) return;
+
+        uint8_t* dst = sBuffer_ + ux + (uint16_t)((uy >> 3) * WIDTH);
+        uint8_t mask = (uint8_t)(1u << (uy & 7));
+
+        uint8_t v = *dst;
+        v = (uint8_t)((v & (uint8_t)~mask) | ((uint8_t)-(uint8_t)(color != 0) & mask));
+        *dst = v;
     }
 
     void drawBitmapFrame(int16_t x, int16_t y, const uint8_t* bmp, uint8_t frame) {
         if(!bmp || !sBuffer_) return;
         const int16_t w = (int16_t)pgm_read_byte(bmp + 0);
         const int16_t h = (int16_t)pgm_read_byte(bmp + 1);
+        if(!isSpriteVisible_(x, y, w, h)) return;
         const int16_t pages = (h + 7) >> 3;
         const uint16_t frame_size = (uint16_t)w * (uint16_t)pages;
         const uint8_t* data = bmp + 2 + (uint32_t)frame * (uint32_t)frame_size;
@@ -262,16 +264,29 @@ public:
         if(!bmp || !sBuffer_) return;
         const int16_t w = (int16_t)pgm_read_byte(bmp + 0);
         const int16_t h = (int16_t)pgm_read_byte(bmp + 1);
+        if(!isSpriteVisible_(x, y, w, h)) return;
         const int16_t pages = (h + 7) >> 3;
         const uint16_t frame_size = (uint16_t)w * (uint16_t)pages;
         const uint8_t* data = bmp + 2 + (uint32_t)frame * (uint32_t)frame_size;
         blitOverwrite_(x, y, data, w, h);
     }
 
+    void eraseBitmapFrame(int16_t x, int16_t y, const uint8_t* bmp, uint8_t frame) {
+        if(!bmp || !sBuffer_) return;
+        const int16_t w = (int16_t)pgm_read_byte(bmp + 0);
+        const int16_t h = (int16_t)pgm_read_byte(bmp + 1);
+        if(!isSpriteVisible_(x, y, w, h)) return;
+        const int16_t pages = (h + 7) >> 3;
+        const uint16_t frame_size = (uint16_t)w * (uint16_t)pages;
+        const uint8_t* data = bmp + 2 + (uint32_t)frame * (uint32_t)frame_size;
+        blitErase_(x, y, data, w, h);
+    }
+
     void drawPlusMask(int16_t x, int16_t y, const uint8_t* plusmask, uint8_t frame) {
         if(!plusmask || !sBuffer_) return;
         const int16_t w = (int16_t)pgm_read_byte(plusmask + 0);
         const int16_t h = (int16_t)pgm_read_byte(plusmask + 1);
+        if(!isSpriteVisible_(x, y, w, h)) return;
         const int16_t pages = (h + 7) >> 3;
         const uint16_t frame_size = (uint16_t)w * (uint16_t)pages;
         const uint8_t* data = plusmask + 2 + (uint32_t)frame * (uint32_t)frame_size * 2u;
@@ -315,6 +330,7 @@ public:
 
         const int16_t w = (int16_t)pgm_read_byte(bmp + 0);
         const int16_t h = (int16_t)pgm_read_byte(bmp + 1);
+        if(!isSpriteVisible_(x, y, w, h)) return;
         const int16_t pages = (h + 7) >> 3;
         const uint16_t frame_size = (uint16_t)w * (uint16_t)pages;
 
@@ -347,29 +363,28 @@ public:
         return frame_count_;
     }
 
-
-  static constexpr uint16_t eepromSysFlags = 1;
+    static constexpr uint16_t eepromSysFlags = 1;
     // Audio mute control. 0 = audio off, non-zero = audio on
-  static constexpr uint16_t eepromAudioOnOff = 2;
+    static constexpr uint16_t eepromAudioOnOff = 2;
     // -- Addresses 3-7 are currently reserved for future use --
     // A uint16_t binary unit ID
-  static constexpr uint16_t eepromUnitID = 8; // A uint16_t binary unit ID
+    static constexpr uint16_t eepromUnitID = 8; // A uint16_t binary unit ID
     // An up to 6 character unit name
     // The name cannot contain 0x00, 0xFF, 0x0A, 0x0D
     // Lengths less than 6 are padded with 0x00
-  static constexpr uint16_t eepromUnitName = 10;
+    static constexpr uint16_t eepromUnitName = 10;
     // -- User EEPROM space starts at address 16 --
 
-  // --- Map of the bits in the eepromSysFlags byte --
+    // --- Map of the bits in the eepromSysFlags byte --
     // Display the unit name on the logo screen
-  static constexpr uint8_t sysFlagUnameBit = 0;
-  static constexpr uint8_t sysFlagUnameMask = _BV(sysFlagUnameBit);
+    static constexpr uint8_t sysFlagUnameBit = 0;
+    static constexpr uint8_t sysFlagUnameMask = _BV(sysFlagUnameBit);
     // Show the logo sequence during boot up
-  static constexpr uint8_t sysFlagShowLogoBit = 1;
-  static constexpr uint8_t sysFlagShowLogoMask = _BV(sysFlagShowLogoBit);
+    static constexpr uint8_t sysFlagShowLogoBit = 1;
+    static constexpr uint8_t sysFlagShowLogoMask = _BV(sysFlagShowLogoBit);
     // Flash the RGB led during the boot logo
-  static constexpr uint8_t sysFlagShowLogoLEDsBit = 2;
-  static constexpr uint8_t sysFlagShowLogoLEDsMask = _BV(sysFlagShowLogoLEDsBit);
+    static constexpr uint8_t sysFlagShowLogoLEDsBit = 2;
+    static constexpr uint8_t sysFlagShowLogoLEDsMask = _BV(sysFlagShowLogoLEDsBit);
 
 private:
     volatile bool* exit_requested_ = nullptr;
@@ -381,43 +396,146 @@ private:
         return (uint8_t)((1u << rem) - 1u);
     }
 
+    static inline bool isSpriteVisible_(int16_t x, int16_t y, int16_t w, int16_t h) {
+        if(w <= 0 || h <= 0) return false;
+        const int32_t x2 = (int32_t)x + (int32_t)w;
+        const int32_t y2 = (int32_t)y + (int32_t)h;
+        return (x < WIDTH) && (y < HEIGHT) && (x2 > 0) && (y2 > 0);
+    }
+
+    static inline bool clipVisibleColumns_(int16_t x, int16_t w, int16_t& start, int16_t& end) {
+        if(w <= 0) return false;
+        const int32_t x2 = (int32_t)x + (int32_t)w;
+        if(x >= WIDTH || x2 <= 0) return false;
+        start = (x < 0) ? (int16_t)(-x) : 0;
+        end = (x2 > WIDTH) ? (int16_t)(WIDTH - x) : w;
+        return start < end;
+    }
+
+    static inline void buildPageMasks_(uint8_t* page_masks, int16_t pages, int16_t h) {
+        for(int16_t p = 0; p < pages; ++p) {
+            page_masks[p] = page_mask_(p, pages, h);
+        }
+    }
+
     void blitSelfMasked_(int16_t x, int16_t y, const uint8_t* src, int16_t w, int16_t h) {
-        if(w <= 0 || h <= 0) return;
+        if(!isSpriteVisible_(x, y, w, h)) return;
+
+        int16_t col_start = 0;
+        int16_t col_end = 0;
+        if(!clipVisibleColumns_(x, w, col_start, col_end)) return;
 
         const int16_t yOffset = (int16_t)(y & 7);
         const int16_t sRow = (int16_t)(y >> 3);
         const int16_t pages = (h + 7) >> 3;
         const int16_t maxRow = (HEIGHT >> 3);
+        uint8_t page_masks[32];
+        buildPageMasks_(page_masks, pages, h);
 
-        for(int16_t i = 0; i < w; i++) {
+        for(int16_t i = col_start; i < col_end; i++) {
             const int16_t sx = (int16_t)(x + i);
-            if((uint16_t)sx >= (uint16_t)WIDTH) continue;
+            uint8_t* dst_col = sBuffer_ + sx;
 
             const uint8_t* col = src + i;
             if(yOffset == 0) {
                 int16_t row = sRow;
-                uint8_t* dst = sBuffer_ + row * WIDTH + sx;
-                for(int16_t p = 0; p < pages; p++, row++, col += w) {
-                    if((uint16_t)row >= (uint16_t)maxRow) continue;
-                    uint8_t b = pgm_read_byte(col);
-                    b &= page_mask_(p, pages, h);
-                    dst[p * WIDTH] |= b;
+                int16_t p = 0;
+
+                if(row < 0) {
+                    p = (int16_t)(-row);
+                    if(p >= pages) continue;
+                    row = 0;
+                    col += (int32_t)p * w;
+                }
+                if(row >= maxRow) continue;
+
+                int16_t p_end = pages;
+                if(row + (p_end - p) > maxRow) {
+                    p_end = (int16_t)(p + (maxRow - row));
+                }
+
+                uint8_t* dst = dst_col + row * WIDTH;
+                for(; p < p_end; ++p, col += w, dst += WIDTH) {
+                    const uint8_t b = (uint8_t)(pgm_read_byte(col) & page_masks[p]);
+                    *dst |= b;
                 }
             } else {
                 for(int16_t p = 0; p < pages; p++, col += w) {
-                    uint8_t b = pgm_read_byte(col);
-                    b &= page_mask_(p, pages, h);
+                    const uint8_t b = (uint8_t)(pgm_read_byte(col) & page_masks[p]);
+                    if(!b) continue;
 
                     const int16_t row = (int16_t)(sRow + p);
                     const uint8_t lo = (uint8_t)(b << yOffset);
                     const uint8_t hi = (uint8_t)(b >> (8 - yOffset));
 
                     if((uint16_t)row < (uint16_t)maxRow) {
-                        sBuffer_[row * WIDTH + sx] |= lo;
+                        dst_col[row * WIDTH] |= lo;
                     }
                     const int16_t row2 = (int16_t)(row + 1);
                     if((uint16_t)row2 < (uint16_t)maxRow) {
-                        sBuffer_[row2 * WIDTH + sx] |= hi;
+                        dst_col[row2 * WIDTH] |= hi;
+                    }
+                }
+            }
+        }
+    }
+
+    void blitErase_(int16_t x, int16_t y, const uint8_t* src, int16_t w, int16_t h) {
+        if(!isSpriteVisible_(x, y, w, h)) return;
+
+        int16_t col_start = 0;
+        int16_t col_end = 0;
+        if(!clipVisibleColumns_(x, w, col_start, col_end)) return;
+
+        const int16_t yOffset = (int16_t)(y & 7);
+        const int16_t sRow = (int16_t)(y >> 3);
+        const int16_t pages = (h + 7) >> 3;
+        const int16_t maxRow = (HEIGHT >> 3);
+        uint8_t page_masks[32];
+        buildPageMasks_(page_masks, pages, h);
+
+        for(int16_t i = col_start; i < col_end; i++) {
+            const int16_t sx = (int16_t)(x + i);
+            uint8_t* dst_col = sBuffer_ + sx;
+
+            const uint8_t* col = src + i;
+            if(yOffset == 0) {
+                int16_t row = sRow;
+                int16_t p = 0;
+
+                if(row < 0) {
+                    p = (int16_t)(-row);
+                    if(p >= pages) continue;
+                    row = 0;
+                    col += (int32_t)p * w;
+                }
+                if(row >= maxRow) continue;
+
+                int16_t p_end = pages;
+                if(row + (p_end - p) > maxRow) {
+                    p_end = (int16_t)(p + (maxRow - row));
+                }
+
+                uint8_t* dst = dst_col + row * WIDTH;
+                for(; p < p_end; ++p, col += w, dst += WIDTH) {
+                    const uint8_t b = (uint8_t)(pgm_read_byte(col) & page_masks[p]);
+                    *dst &= (uint8_t)~b;
+                }
+            } else {
+                for(int16_t p = 0; p < pages; p++, col += w) {
+                    const uint8_t b = (uint8_t)(pgm_read_byte(col) & page_masks[p]);
+                    if(!b) continue;
+
+                    const int16_t row = (int16_t)(sRow + p);
+                    const uint8_t lo = (uint8_t)(b << yOffset);
+                    const uint8_t hi = (uint8_t)(b >> (8 - yOffset));
+
+                    if((uint16_t)row < (uint16_t)maxRow) {
+                        dst_col[row * WIDTH] &= (uint8_t)~lo;
+                    }
+                    const int16_t row2 = (int16_t)(row + 1);
+                    if((uint16_t)row2 < (uint16_t)maxRow) {
+                        dst_col[row2 * WIDTH] &= (uint8_t)~hi;
                     }
                 }
             }
@@ -425,30 +543,49 @@ private:
     }
 
     void blitOverwrite_(int16_t x, int16_t y, const uint8_t* src, int16_t w, int16_t h) {
-        if(w <= 0 || h <= 0) return;
+        if(!isSpriteVisible_(x, y, w, h)) return;
+
+        int16_t col_start = 0;
+        int16_t col_end = 0;
+        if(!clipVisibleColumns_(x, w, col_start, col_end)) return;
 
         const int16_t yOffset = (int16_t)(y & 7);
         const int16_t sRow = (int16_t)(y >> 3);
         const int16_t pages = (h + 7) >> 3;
         const int16_t maxRow = (HEIGHT >> 3);
+        uint8_t page_masks[32];
+        buildPageMasks_(page_masks, pages, h);
 
-        for(int16_t i = 0; i < w; i++) {
+        for(int16_t i = col_start; i < col_end; i++) {
             const int16_t sx = (int16_t)(x + i);
-            if((uint16_t)sx >= (uint16_t)WIDTH) continue;
+            uint8_t* dst_col = sBuffer_ + sx;
 
             const uint8_t* col = src + i;
             if(yOffset == 0) {
                 int16_t row = sRow;
-                for(int16_t p = 0; p < pages; p++, row++, col += w) {
-                    if((uint16_t)row >= (uint16_t)maxRow) continue;
-                    uint8_t b = pgm_read_byte(col);
-                    b &= page_mask_(p, pages, h);
-                    sBuffer_[row * WIDTH + sx] = b;
+                int16_t p = 0;
+
+                if(row < 0) {
+                    p = (int16_t)(-row);
+                    if(p >= pages) continue;
+                    row = 0;
+                    col += (int32_t)p * w;
+                }
+                if(row >= maxRow) continue;
+
+                int16_t p_end = pages;
+                if(row + (p_end - p) > maxRow) {
+                    p_end = (int16_t)(p + (maxRow - row));
+                }
+
+                uint8_t* dst = dst_col + row * WIDTH;
+                for(; p < p_end; ++p, col += w, dst += WIDTH) {
+                    *dst = (uint8_t)(pgm_read_byte(col) & page_masks[p]);
                 }
             } else {
                 for(int16_t p = 0; p < pages; p++, col += w) {
                     uint8_t b = pgm_read_byte(col);
-                    uint8_t srcMask = page_mask_(p, pages, h);
+                    const uint8_t srcMask = page_masks[p];
                     b &= srcMask;
 
                     const int16_t row = (int16_t)(sRow + p);
@@ -459,12 +596,12 @@ private:
                     const uint8_t maskHi = (uint8_t)(srcMask >> (8 - yOffset));
 
                     if((uint16_t)row < (uint16_t)maxRow) {
-                        uint8_t* dst = &sBuffer_[row * WIDTH + sx];
+                        uint8_t* dst = &dst_col[row * WIDTH];
                         *dst = (uint8_t)((*dst & (uint8_t)~maskLo) | (lo & maskLo));
                     }
                     const int16_t row2 = (int16_t)(row + 1);
                     if((uint16_t)row2 < (uint16_t)maxRow) {
-                        uint8_t* dst2 = &sBuffer_[row2 * WIDTH + sx];
+                        uint8_t* dst2 = &dst_col[row2 * WIDTH];
                         *dst2 = (uint8_t)((*dst2 & (uint8_t)~maskHi) | (hi & maskHi));
                     }
                 }
@@ -473,46 +610,71 @@ private:
     }
 
     void blitPlusMask_(int16_t x, int16_t y, const uint8_t* srcPairs, int16_t w, int16_t h) {
-        if(w <= 0 || h <= 0) return;
+        if(!isSpriteVisible_(x, y, w, h)) return;
+
+        int16_t col_start = 0;
+        int16_t col_end = 0;
+        if(!clipVisibleColumns_(x, w, col_start, col_end)) return;
 
         const int16_t yOffset = (int16_t)(y & 7);
         const int16_t sRow = (int16_t)(y >> 3);
         const int16_t pages = (h + 7) >> 3;
         const int16_t maxRow = (HEIGHT >> 3);
+        uint8_t page_masks[32];
+        buildPageMasks_(page_masks, pages, h);
 
-        for(int16_t i = 0; i < w; i++) {
+        for(int16_t i = col_start; i < col_end; i++) {
             const int16_t sx = (int16_t)(x + i);
-            if((uint16_t)sx >= (uint16_t)WIDTH) continue;
+            uint8_t* dst_col = sBuffer_ + sx;
+            const uint8_t* col = srcPairs + (uint16_t)i * 2u;
 
-            for(int16_t p = 0; p < pages; p++) {
-                const uint16_t idx = (uint16_t)(i + p * w) * 2u;
-                uint8_t s = pgm_read_byte(srcPairs + idx + 0);
-                uint8_t m = pgm_read_byte(srcPairs + idx + 1);
+            if(yOffset == 0) {
+                int16_t row = sRow;
+                int16_t p = 0;
 
-                uint8_t srcMask = page_mask_(p, pages, h);
-                s &= srcMask;
-                m &= srcMask;
+                if(row < 0) {
+                    p = (int16_t)(-row);
+                    if(p >= pages) continue;
+                    row = 0;
+                    col += (int32_t)p * w * 2;
+                }
+                if(row >= maxRow) continue;
 
-                const int16_t row = (int16_t)(sRow + p);
+                int16_t p_end = pages;
+                if(row + (p_end - p) > maxRow) {
+                    p_end = (int16_t)(p + (maxRow - row));
+                }
 
-                if(yOffset == 0) {
-                    if((uint16_t)row < (uint16_t)maxRow) {
-                        uint8_t* dst = &sBuffer_[row * WIDTH + sx];
-                        *dst = (uint8_t)((*dst & (uint8_t)~m) | (s & m));
-                    }
-                } else {
+                uint8_t* dst = dst_col + row * WIDTH;
+                for(; p < p_end; ++p, col += (int32_t)w * 2, dst += WIDTH) {
+                    uint8_t s = pgm_read_byte(col + 0);
+                    uint8_t m = pgm_read_byte(col + 1);
+                    const uint8_t srcMask = page_masks[p];
+                    s &= srcMask;
+                    m &= srcMask;
+                    *dst = (uint8_t)((*dst & (uint8_t)~m) | (s & m));
+                }
+            } else {
+                for(int16_t p = 0; p < pages; p++, col += (int32_t)w * 2) {
+                    uint8_t s = pgm_read_byte(col + 0);
+                    uint8_t m = pgm_read_byte(col + 1);
+                    const uint8_t srcMask = page_masks[p];
+                    s &= srcMask;
+                    m &= srcMask;
+
+                    const int16_t row = (int16_t)(sRow + p);
                     const uint8_t slo = (uint8_t)(s << yOffset);
                     const uint8_t shi = (uint8_t)(s >> (8 - yOffset));
                     const uint8_t mlo = (uint8_t)(m << yOffset);
                     const uint8_t mhi = (uint8_t)(m >> (8 - yOffset));
 
                     if((uint16_t)row < (uint16_t)maxRow) {
-                        uint8_t* dst = &sBuffer_[row * WIDTH + sx];
+                        uint8_t* dst = &dst_col[row * WIDTH];
                         *dst = (uint8_t)((*dst & (uint8_t)~mlo) | (slo & mlo));
                     }
                     const int16_t row2 = (int16_t)(row + 1);
                     if((uint16_t)row2 < (uint16_t)maxRow) {
-                        uint8_t* dst2 = &sBuffer_[row2 * WIDTH + sx];
+                        uint8_t* dst2 = &dst_col[row2 * WIDTH];
                         *dst2 = (uint8_t)((*dst2 & (uint8_t)~mhi) | (shi & mhi));
                     }
                 }
@@ -527,32 +689,51 @@ private:
         const uint8_t* mask,
         int16_t w,
         int16_t h) {
-        if(w <= 0 || h <= 0) return;
+        if(!isSpriteVisible_(x, y, w, h)) return;
+
+        int16_t col_start = 0;
+        int16_t col_end = 0;
+        if(!clipVisibleColumns_(x, w, col_start, col_end)) return;
 
         const int16_t yOffset = (int16_t)(y & 7);
         const int16_t sRow = (int16_t)(y >> 3);
         const int16_t pages = (h + 7) >> 3;
         const int16_t maxRow = (HEIGHT >> 3);
+        uint8_t page_masks[32];
+        buildPageMasks_(page_masks, pages, h);
 
-        for(int16_t i = 0; i < w; i++) {
+        for(int16_t i = col_start; i < col_end; i++) {
             const int16_t sx = (int16_t)(x + i);
-            if((uint16_t)sx >= (uint16_t)WIDTH) continue;
+            uint8_t* dst_col = sBuffer_ + sx;
 
             const uint8_t* scol = sprite + i;
             const uint8_t* mcol = mask + i;
 
             if(yOffset == 0) {
                 int16_t row = sRow;
-                for(int16_t p = 0; p < pages; p++, row++, scol += w, mcol += w) {
-                    if((uint16_t)row >= (uint16_t)maxRow) continue;
+                int16_t p = 0;
 
+                if(row < 0) {
+                    p = (int16_t)(-row);
+                    if(p >= pages) continue;
+                    row = 0;
+                    scol += (int32_t)p * w;
+                    mcol += (int32_t)p * w;
+                }
+                if(row >= maxRow) continue;
+
+                int16_t p_end = pages;
+                if(row + (p_end - p) > maxRow) {
+                    p_end = (int16_t)(p + (maxRow - row));
+                }
+
+                uint8_t* dst = dst_col + row * WIDTH;
+                for(; p < p_end; ++p, scol += w, mcol += w, dst += WIDTH) {
                     uint8_t s = pgm_read_byte(scol);
                     uint8_t m = pgm_read_byte(mcol);
-                    uint8_t srcMask = page_mask_(p, pages, h);
+                    const uint8_t srcMask = page_masks[p];
                     s &= srcMask;
                     m &= srcMask;
-
-                    uint8_t* dst = &sBuffer_[row * WIDTH + sx];
                     *dst = (uint8_t)((*dst & (uint8_t)~m) | (s & m));
                 }
             } else {
@@ -560,7 +741,7 @@ private:
                     uint8_t s = pgm_read_byte(scol);
                     uint8_t m = pgm_read_byte(mcol);
 
-                    uint8_t srcMask = page_mask_(p, pages, h);
+                    const uint8_t srcMask = page_masks[p];
                     s &= srcMask;
                     m &= srcMask;
 
@@ -572,12 +753,12 @@ private:
                     const uint8_t mhi = (uint8_t)(m >> (8 - yOffset));
 
                     if((uint16_t)row < (uint16_t)maxRow) {
-                        uint8_t* dst = &sBuffer_[row * WIDTH + sx];
+                        uint8_t* dst = &dst_col[row * WIDTH];
                         *dst = (uint8_t)((*dst & (uint8_t)~mlo) | (slo & mlo));
                     }
                     const int16_t row2 = (int16_t)(row + 1);
                     if((uint16_t)row2 < (uint16_t)maxRow) {
-                        uint8_t* dst2 = &sBuffer_[row2 * WIDTH + sx];
+                        uint8_t* dst2 = &dst_col[row2 * WIDTH];
                         *dst2 = (uint8_t)((*dst2 & (uint8_t)~mhi) | (shi & mhi));
                     }
                 }
@@ -593,6 +774,10 @@ private:
     // }
 
     static uint8_t mapInputToArduboyMask_(uint8_t in) {
+#if (INPUT_UP == UP_BUTTON) && (INPUT_DOWN == DOWN_BUTTON) && (INPUT_LEFT == LEFT_BUTTON) && \
+    (INPUT_RIGHT == RIGHT_BUTTON) && (INPUT_A == A_BUTTON) && (INPUT_B == B_BUTTON)
+        return in;
+#else
         uint8_t out = 0;
         if(in & INPUT_UP) out |= UP_BUTTON;
         if(in & INPUT_DOWN) out |= DOWN_BUTTON;
@@ -601,6 +786,7 @@ private:
         if(in & INPUT_B) out |= B_BUTTON;
         if(in & INPUT_A) out |= A_BUTTON;
         return out;
+#endif
     }
 
     FuriMutex* game_mutex_ = nullptr;
@@ -638,24 +824,7 @@ public:
 
     void drawErase(int16_t x, int16_t y, const uint8_t* bmp, uint8_t frame = 0) {
         if(!ab_ || !bmp) return;
-
-        const uint8_t w = pgm_read_byte(bmp + 0);
-        const uint8_t h = pgm_read_byte(bmp + 1);
-        const uint8_t pages = (uint8_t)((h + 7) >> 3);
-        const uint16_t frame_size = (uint16_t)w * pages;
-        const uint8_t* f = (bmp + 2) + (uint32_t)frame * frame_size;
-
-        for(uint8_t page = 0; page < pages; page++) {
-            for(uint8_t i = 0; i < w; i++) {
-                uint8_t byte = pgm_read_byte(f + i + (uint16_t)page * w);
-                while(byte) {
-                    uint8_t b = (uint8_t)__builtin_ctz((unsigned)byte);
-                    uint8_t py = (uint8_t)(page * 8u + b);
-                    if(py < h) ab_->drawPixel((int16_t)(x + i), (int16_t)(y + py), 0);
-                    byte = (uint8_t)(byte & (uint8_t)(byte - 1u));
-                }
-            }
-        }
+        ab_->eraseBitmapFrame(x, y, bmp, frame);
     }
 
     void drawPlusMask(int16_t x, int16_t y, const uint8_t* plusmask, uint8_t frame = 0) {
