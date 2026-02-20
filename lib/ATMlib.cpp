@@ -106,7 +106,9 @@ static uint32_t dma_buf[ATM_DMA_TOTAL];
 
 static bool atm_running = false;
 static bool atm_paused = false;
-static float atm_master_volume = 1.0f;
+// Match FlipperATM UI: +2 volume units (0.1 step each) => +0.2 gain.
+static constexpr float ATM_MASTER_VOLUME_MAX = 1.2f;
+static float atm_master_volume = ATM_MASTER_VOLUME_MAX;
 
 static uint32_t atm_tick_div = 0;
 static uint32_t atm_tick_acc = 0;
@@ -124,17 +126,18 @@ static inline uint8_t atm_render_logical_sample_u8() {
     if(phase2 < 0) phase2 = (int8_t)(~phase2);
     phase2 = (int8_t)(phase2 << 1);
     phase2 = (int8_t)(phase2 - 128);
-    int8_t vol = (int8_t)((((int16_t)phase2 * (int8_t)osc[2].vol) << 1) >> 8);
+    int8_t c2 = (int8_t)((((int16_t)phase2 * (int8_t)osc[2].vol) << 1) >> 8);
+    int16_t mix = c2;
 
     osc[0].phase = (uint16_t)(osc[0].phase + osc[0].freq);
-    int8_t vol0 = (int8_t)osc[0].vol;
-    if(osc[0].phase >= 0xC000) vol0 = (int8_t)(-vol0);
-    vol = (int8_t)(vol + vol0);
+    int8_t c0 = (int8_t)osc[0].vol;
+    if(osc[0].phase >= 0xC000) c0 = (int8_t)(-c0);
+    mix += c0;
 
     osc[1].phase = (uint16_t)(osc[1].phase + osc[1].freq);
-    int8_t vol1 = (int8_t)osc[1].vol;
-    if(osc[1].phase & 0x8000) vol1 = (int8_t)(-vol1);
-    vol = (int8_t)(vol + vol1);
+    int8_t c1 = (int8_t)osc[1].vol;
+    if(osc[1].phase & 0x8000) c1 = (int8_t)(-c1);
+    mix += c1;
 
     uint16_t freq = osc[3].freq;
     freq <<= 1;
@@ -142,11 +145,11 @@ static inline uint8_t atm_render_logical_sample_u8() {
     if(freq & 0x4000) freq ^= 1;
     osc[3].freq = freq;
 
-    int8_t vol3 = (int8_t)osc[3].vol;
-    if(freq & 0x8000) vol3 = (int8_t)(-vol3);
-    vol = (int8_t)(vol + vol3);
+    int8_t c3 = (int8_t)osc[3].vol;
+    if(freq & 0x8000) c3 = (int8_t)(-c3);
+    mix += c3;
 
-    int16_t out = (int16_t)vol + (int16_t)pcm;
+    int16_t out = mix + (int16_t)pcm;
 
     float centered = (float)(out - 128);
     centered *= atm_master_volume;
@@ -650,7 +653,7 @@ static int32_t atm_thread_fn(void* /*ctx*/) {
             if(cmd.type == AtmCmdSetVolume) {
                 float v = cmd.u.vol.v;
                 if(v < 0) v = 0;
-                if(v > 1) v = 1;
+                if(v > ATM_MASTER_VOLUME_MAX) v = ATM_MASTER_VOLUME_MAX;
                 atm_master_volume = v;
                 continue;
             }
