@@ -2,7 +2,6 @@
 
 #include <furi.h>
 #include <furi_hal.h>
-#include <notification/notification_app.h>
 #include "ArduboyTones.h"
 
 class ArduboyAudio {
@@ -40,13 +39,9 @@ public:
     }
 
     bool systemAudioEnabled() const {
-        if(furi_hal_rtc_is_flag_set(FuriHalRtcFlagStealthMode)) return false;
-
-        NotificationApp* notification = (NotificationApp*)furi_record_open(RECORD_NOTIFICATION);
-        const float speaker_volume = notification->settings.speaker_volume;
-        furi_record_close(RECORD_NOTIFICATION);
-
-        return speaker_volume > 0.001f;
+        // Keep compatibility with public SDK headers used by ufbt/CI:
+        // notification settings internals are not part of public API.
+        return !furi_hal_rtc_is_flag_set(FuriHalRtcFlagStealthMode);
     }
 
     void saveOnOff() {
