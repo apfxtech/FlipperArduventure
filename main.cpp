@@ -41,14 +41,29 @@ typedef struct {
     volatile bool exit_requested;
     volatile bool in_frame;
     volatile bool invert_frame;
+    volatile uint32_t input_cb_inflight;
 } FlipperState;
 
 static FlipperState* g_state = NULL;
+extern Arduboy2Base* arduboy_ptr;
+
+static void wait_input_callbacks_idle(FlipperState* state) {
+    if(!state) return;
+    while(__atomic_load_n((uint32_t*)&state->input_cb_inflight, __ATOMIC_ACQUIRE) != 0) {
+        furi_delay_ms(1);
+    }
+}
 
 static void input_events_callback(const void* value, void* ctx) {
     if(!value || !ctx) return;
-    InputEvent* e = (InputEvent*)value;
-    Arduboy2Base::FlipperInputCallback(e, ctx);
+    FlipperState* state = (FlipperState*)ctx;
+    const InputEvent* event = (const InputEvent*)value;
+    Arduboy2Base::InputContext* input_ctx = arduboy_ptr ? arduboy_ptr->inputContext() : nullptr;
+    if(!input_ctx) return;
+
+    (void)__atomic_fetch_add((uint32_t*)&state->input_cb_inflight, 1, __ATOMIC_RELAXED);
+    Arduboy2Base::FlipperInputCallback(event, input_ctx);
+    (void)__atomic_fetch_sub((uint32_t*)&state->input_cb_inflight, 1, __ATOMIC_RELAXED);
 }
 
 #define GAME_ID 46
@@ -189,6 +204,7 @@ extern "C" int32_t arduboy_app(void* p) {
 
     g_state->exit_requested = false;
     g_state->invert_frame = false;
+    g_state->input_cb_inflight = 0;
 
     memset(g_state->screen_buffer, 0x00, BUFFER_SIZE);
     memset(g_state->front_buffer, 0x00, BUFFER_SIZE);
@@ -206,7 +222,7 @@ extern "C" int32_t arduboy_app(void* p) {
 
     g_state->input_events = (FuriPubSub*)furi_record_open(RECORD_INPUT_EVENTS);
     g_state->input_sub = furi_pubsub_subscribe(
-        g_state->input_events, input_events_callback, arduboy.inputContext());
+        g_state->input_events, input_events_callback, g_state);
 
     // Setup game and do one initial draw
     furi_mutex_acquire(g_state->game_mutex, FuriWaitForever);
@@ -245,6 +261,8 @@ extern "C" int32_t arduboy_app(void* p) {
         furi_pubsub_unsubscribe(g_state->input_events, g_state->input_sub);
         g_state->input_sub = NULL;
     }
+
+    wait_input_callbacks_idle(g_state);
 
     if(g_state->input_events) {
         furi_record_close(RECORD_INPUT_EVENTS);
